@@ -55,7 +55,7 @@ class Nion(configuration: Configuration) : ChainBuilder(configuration) {
     private fun attemptBootstrap() {
         if (isTrustedNode || isBootstrapped) return
 
-        Logger.info("Attempting bootstrapping.")
+        Logger.info("Attempting bootstrapping to ${configuration.trustedNodeIP}:${configuration.trustedNodePort}.")
         bootstrap(configuration.trustedNodeIP, configuration.trustedNodePort)
         runAfter(Random.nextLong(10000, 20000), this::attemptBootstrap)
     }
@@ -71,7 +71,7 @@ class Nion(configuration: Configuration) : ChainBuilder(configuration) {
             }
 
             // TODO -------------------------------------
-            val execution = endpoints[endpoint] ?: throw Exception("Endpoint $endpoint has no handler set.")
+            val execution = endpoints[endpoint] ?: return // throw Exception("Endpoint $endpoint has no handler set.")
             if (endpoint.processing == MessageProcessing.Queued) processingQueue.put { execution(message) }
             else launchCoroutine { execution(message) }
         }

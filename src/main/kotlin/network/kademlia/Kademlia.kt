@@ -9,6 +9,7 @@ import logging.Dashboard
 import logging.Logger
 import network.SocketHolder
 import network.data.Node
+import network.rpc.Topic
 import utils.*
 import java.io.ByteArrayInputStream
 import java.io.DataInputStream
@@ -16,9 +17,12 @@ import java.net.DatagramPacket
 import java.net.DatagramSocket
 import java.net.InetSocketAddress
 import java.nio.ByteBuffer
+import java.util.Timer
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.locks.ReentrantLock
+import kotlin.concurrent.scheduleAtFixedRate
+import kotlin.concurrent.withLock
 import kotlin.random.Random
 
 /**
@@ -31,7 +35,7 @@ open class Kademlia(configuration: Configuration) : SocketHolder(configuration) 
 
     val crypto = Crypto(".")
 
-    private val kademliaSocket: DatagramSocket = if (configuration.passedPort != -1) DatagramSocket(configuration.passedPort) else DatagramSocket()
+    private val kademliaSocket: DatagramSocket = configuration.port?.let { DatagramSocket(it) } ?: DatagramSocket()
 
     val localAddress = getLocalAddress()
     val localNode = Node(
@@ -43,7 +47,7 @@ open class Kademlia(configuration: Configuration) : SocketHolder(configuration) 
         publicKey = crypto.publicKey
     ).apply {
         Dashboard.myInfo = "$ip:$kademliaPort"
-        println(Dashboard.myInfo)
+        Logger.info("Kademlia listening on: ${Dashboard.myInfo}")
     }
     val isTrustedNode = localNode.let { node -> node.ip == configuration.trustedNodeIP && node.kademliaPort == configuration.trustedNodePort }
 
@@ -58,17 +62,19 @@ open class Kademlia(configuration: Configuration) : SocketHolder(configuration) 
     private val incomingQueue = LinkedBlockingQueue<KademliaMessage>()
     private val queryStorage = ConcurrentHashMap<String, KademliaQuery>()
     private val bucketSize = 20
-    private val testLock = ReentrantLock(true)
+    private val storageLock = ReentrantLock(true)
 
     init {
         Logger.debug("Our identifier is: ${localNode.identifier}")
         Thread(::sendOutgoing).start()
         Thread(::receiveIncoming).start()
         Thread(::processIncoming).start()
-        lookForInactiveQueries()
+        Timer().scheduleAtFixedRate(5000, 5000) {
+            lookForInactiveQueries()
+        }
 
         if (isTrustedNode) add(localNode)
-        printTree()
+        // printTree()
     }
 
     /** Sends a FIND_NODE request of our key to the known bootstrapping [Node]. */
@@ -157,6 +163,7 @@ open class Kademlia(configuration: Configuration) : SocketHolder(configuration) 
                     addToQueue(sender, KademliaEndpoint.CLOSEST_NODES, encodedReply)
                     add(sender)
                 }
+
                 KademliaEndpoint.CLOSEST_NODES -> {
                     val closestNodes = ProtoBuf.decodeFromByteArray<ClosestNodes>(kademliaMessage.data)
                     val receivedNodes = closestNodes.nodes
@@ -176,7 +183,6 @@ open class Kademlia(configuration: Configuration) : SocketHolder(configuration) 
                         queryHolder.hops++
                         val node = knownNodes[queryHolder.identifier] ?: return@forEach
                         val actionsToDo = mutableListOf<(Node) -> Unit>()
-
                         queryHolder.queue.drainTo(actionsToDo)
                         // Logger.trace("Drained $drained actions.")
                         launchCoroutine {
@@ -247,7 +253,6 @@ open class Kademlia(configuration: Configuration) : SocketHolder(configuration) 
             Logger.info("Reviving ${inactiveQueries.size} inactive queries.")
             Dashboard.reportException(Exception("Reviving ${inactiveQueries.size} inactive queries."))
         }
-        runAfter(5000, this::lookForInactiveQueries)
     }
 
     /** Debugs the built kademlia tree [development purposes only]. */
